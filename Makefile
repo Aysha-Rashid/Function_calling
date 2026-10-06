@@ -8,11 +8,11 @@ run:
 	--output data/output/function_calling_results.json
 
 debug:
-	uv run python -m pdb -c continue -m src
+	CMM_DEBUG=1 uv run python -m pdb -c continue -m src
 
 clean:
-	rm __pycache__ .mypy_cache src/__pycache__
+	rm __pycache__ .mypy_cache src/__pycache__ rm -rf data/output
 
 lint:
-	flake8 .
-	mypy . --warn-return-any --warn-unused-ignores --ignore-missing-imports --disallow-untyped-defs --check-untyped-defs
+	flake8 src
+	mypy src --warn-return-any --warn-unused-ignores --ignore-missing-imports --disallow-untyped-defs --check-untyped-defs
