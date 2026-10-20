@@ -1,3 +1,5 @@
+"""Apply token-level constraints during structured JSON generation."""
+
 import os
 from typing import Dict, List, Sequence, Set
 import numpy as np
@@ -19,7 +21,18 @@ DEBUG_STRING_CONSTRAINT = os.environ.get("CMM_DEBUG_STRING") == "1"
 
 
 def after_val_suffix(schema: JSONStructure) -> str:
-    """Return the fixed JSON text required after the current value."""
+    """Return the fixed JSON text required after the current value.
+
+    Args:
+        schema: The current generation state.
+
+    Returns:
+        A comma and opening quote when parameters remain, otherwise the
+        closing JSON text.
+
+    Raises:
+        ValueError: If no function has been selected.
+    """
     if schema.selected_function is None:
         raise ValueError("No function selected")
 
@@ -33,7 +46,16 @@ def constrain_fixed_tokens(
     token_ids: Sequence[int],
     index: int,
 ) -> np.ndarray:
-    """Allow only the next token in a fixed token sequence."""
+    """Allow only the next token in a fixed token sequence.
+
+    Args:
+        logits: The model logits for the current generation step.
+        token_ids: The required fixed token sequence.
+        index: The index of the next required token.
+
+    Returns:
+        Logits with all tokens except the required token masked.
+    """
     if index >= len(token_ids):
         return logits
 
@@ -48,7 +70,19 @@ def constrain_fixed_text(
     vocab_items: Sequence[tuple[int, str]],
     text: str,
 ) -> np.ndarray:
-    """Allow tokens that can emit the next part of fixed text."""
+    """Allow tokens that can emit the next part of fixed text.
+
+    Args:
+        logits: The model logits for the current generation step.
+        vocab_items: Token IDs paired with their decoded text.
+        text: The fixed text that must be emitted next.
+
+    Returns:
+        Logits containing only tokens that are prefixes of ``text``.
+
+    Raises:
+        ValueError: If no vocabulary token can emit the required text.
+    """
     valid_indices = [
         token_id
         for token_id, token_text in vocab_items
@@ -70,8 +104,17 @@ def _prefix_token_ids(
     cache: Dict[tuple[frozenset[str], str], List[int]],
 ) -> List[int]:
     """Return token IDs that keep at least one target reachable.
-    Results are cached because function and parameter names are reused across
-    prompts and the same prefixes recur during autoregressive decoding.
+
+    Args:
+        partial: The name prefix generated so far.
+        targets: Valid function or parameter names.
+        vocab_items: Token IDs paired with their decoded text.
+        cache: Shared cache for repeated prefix lookups.
+
+    Returns:
+        Token IDs whose text keeps at least one target reachable.
+
+    The results are cached because names and prefixes recur across prompts.
     """
     key = (frozenset(targets), partial)
     cached = cache.get(key)
@@ -95,7 +138,19 @@ def constrain_para_key(
     vocab_items: Sequence[tuple[int, str]],
     schema: JSONStructure,
 ) -> np.ndarray:
-    """Constrain generation to valid parameter-name continuations."""
+    """Constrain generation to valid parameter-name continuations.
+
+    Args:
+        logits: The model logits for the current generation step.
+        vocab_items: Token IDs paired with their decoded text.
+        schema: The current generation state.
+
+    Returns:
+        Logits containing only valid parameter-name continuations.
+
+    Raises:
+        ValueError: If no function is selected or no valid continuation exists.
+    """
     if schema.selected_function is None:
         raise ValueError("No function selected")
 
@@ -122,7 +177,17 @@ def _is_valid_string_step(
     token_text: str,
     suffix: str,
 ) -> bool:
-    """Return True when token_text legally continues the JSON string."""
+    """Check whether a token legally continues the JSON string.
+
+    Args:
+        partial_value: The string value generated so far.
+        token_text: The decoded text of a candidate token.
+        suffix: The JSON text required after the string closes.
+
+    Returns:
+        ``True`` when the token preserves a valid string or closes it with a
+        valid required suffix.
+    """
     if not token_text:
         return False
 
@@ -144,7 +209,15 @@ def _debug_string_constraint(
     vocab_items: Sequence[tuple[int, str]],
     valid_indices: Sequence[int],
 ) -> None:
-    """Print focused diagnostics for a stuck string value."""
+    """Print focused diagnostics for a stuck string value.
+
+    Args:
+        schema: The current generation state.
+        partial_value: The string value generated so far.
+        logits: The model logits for the current generation step.
+        vocab_items: Token IDs paired with their decoded text.
+        valid_indices: Token IDs currently allowed by the constraints.
+    """
     candidate = partial_value + '"'
     print(f"[string] current={partial_value!r}")
     print(f"[string] +quote={candidate!r}")
@@ -178,7 +251,20 @@ def constrain_para_val(
     vocab_items: Sequence[tuple[int, str]],
     schema: JSONStructure,
 ) -> np.ndarray:
-    """Constrain a parameter value according to its declared type."""
+    """Constrain a parameter value according to its declared type.
+
+    Args:
+        logits: The model logits for the current generation step.
+        vocab_items: Token IDs paired with their decoded text.
+        schema: The current generation state and parameter type.
+
+    Returns:
+        Logits containing only valid value continuations or terminators.
+
+    Raises:
+        ValueError: If the parameter type is unsupported or no valid token
+            continuation exists.
+    """
     para_type = schema.cur_para_type
     partial_value = schema.part_para_val
     valid_indices: List[int] = []
@@ -243,7 +329,14 @@ def constrain_para_val(
 
 
 def _val_terminator_ids(schema: JSONStructure) -> List[int]:
-    """Return the first token allowed after a complete value."""
+    """Return the first token allowed after a complete value.
+
+    Args:
+        schema: The current generation state.
+
+    Returns:
+        The first separator or closing token allowed after the value.
+    """
     if schema.remaining_parameters:
         return schema.after_val_sep_ids[:1]
     return schema.after_val_end_ids[:1]
@@ -255,7 +348,20 @@ def adding_constraint(
     vocab_items: Sequence[tuple[int, str]],
     schema: JSONStructure,
 ) -> np.ndarray:
-    """Apply token-level constraints according to the current state."""
+    """Apply token-level constraints according to the current state.
+
+    Args:
+        cur_str: The JSON prefix and generated text so far.
+        logits: The model logits for the current generation step.
+        vocab_items: Token IDs paired with their decoded text.
+        schema: The mutable generation state machine.
+
+    Returns:
+        Logits masked according to the current generation state.
+
+    Raises:
+        ValueError: If the state is inconsistent or no valid token exists.
+    """
     masked_logits = np.asarray(logits, dtype=np.float32) # asarray is to convert list to np.ndarray
     if schema.state == GenerationState.FUNCTION_NAME:
         name_prefix = '"name": "'

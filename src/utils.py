@@ -1,10 +1,24 @@
+"""Validation helpers for JSON values and token-level generation."""
+
 import numpy as np
 from typing import List
 import re
 
 
 def apply_token_mask(logits: np.ndarray, valid_ids: List[int]) -> np.ndarray:
-    """Keep only the supplied token IDs."""
+    """Keep only the supplied token IDs in the logits array.
+
+    Args:
+        logits: The model logits for the current generation step.
+        valid_ids: Token IDs that may be selected.
+
+    Returns:
+        A copy of ``logits`` with invalid token logits set to negative
+        infinity.
+
+    Raises:
+        ValueError: If ``valid_ids`` is empty.
+    """
     if not valid_ids:
         raise ValueError("No valid tokens available")
 
@@ -21,7 +35,14 @@ _NUMBER_COMPLETE_RE = re.compile(
 
 
 def is_number_prefix(value: str) -> bool:
-    """Return True if valuecan still become a valid JSON number."""
+    """Check whether a value can still become a valid JSON number.
+
+    Args:
+        value: The partially generated number text.
+
+    Returns:
+        ``True`` if the value is a valid prefix of a JSON number.
+    """
     if value == "-":
         return True
     if not value:
@@ -74,7 +95,14 @@ def is_number_prefix(value: str) -> bool:
 
 
 def is_complete_number(value: str) -> bool:
-    """Return True when valueis a complete JSON number."""
+    """Check whether a value is a complete JSON number.
+
+    Args:
+        value: The generated number text.
+
+    Returns:
+        ``True`` if the value is a complete JSON number.
+    """
     return _NUMBER_COMPLETE_RE.fullmatch(value) is not None
 
 
@@ -89,23 +117,18 @@ STRING_INVALID = "invalid"         # can never become a valid JSON string
 
 
 def scan_string(value: str) -> tuple[str, int]:
-    """Classify *value* as the text of a JSON string.
+    """Classify a partial or complete JSON string.
 
-    *value* is expected to start with the opening quote. The scan returns a
-    ``(status, index)`` pair:
+    Args:
+        value: String text beginning with an opening quote.
 
-    * ``(STRING_INCOMPLETE, -1)`` -- no closing quote yet, but everything
-      seen so far may still become a valid JSON string.
-    * ``(STRING_COMPLETE, i)`` -- the string is terminated by the closing
-      quote at index ``i``. ``value[:i + 1]`` is then the whole string and
-      ``value[i + 1:]`` is text that follows it.
-    * ``(STRING_INVALID, -1)`` -- no continuation can rescue *value*.
+    Returns:
+        A ``(status, index)`` pair. The status is one of the string status
+        constants. The index is the closing-quote position for a complete
+        string, or ``-1`` otherwise.
 
-    Reporting the position of the closing quote, instead of only accepting a
-    quote in the very last position, is what allows a token that fuses the
-    closing quote with the JSON punctuation coming after the value. Such a
-    token finishes the string legally even though its quote is not the last
-    character of the token.
+    The closing-quote position allows a token to contain both the end of the
+    string and following JSON punctuation.
     """
     if not value or value[0] != '"':
         return STRING_INVALID, -1
@@ -142,30 +165,41 @@ def scan_string(value: str) -> tuple[str, int]:
 
 
 def is_string_prefix(value: str) -> bool:
-    """Return True if value can still become a valid JSON string.
+    """Check whether a value can still become a valid JSON string.
 
-    A string that is already closed counts as a valid prefix too: nothing
-    has to be appended to it, but it must not be rejected either.
+    Args:
+        value: The partial or complete JSON string.
+
+    Returns:
+        ``True`` for incomplete and complete valid strings.
     """
     status, _ = scan_string(value)
     return status in (STRING_INCOMPLETE, STRING_COMPLETE)
 
 
 def is_complete_string(value: str) -> bool:
-    """Return True when value is exactly one complete JSON string."""
+    """Check whether a value is exactly one complete JSON string.
+
+    Args:
+        value: The generated string text.
+
+    Returns:
+        ``True`` if the string has a valid closing quote at its end.
+    """
     status, close_index = scan_string(value)
     return status == STRING_COMPLETE and close_index == len(value) - 1
 
 
 def closes_string(value: str, token_text: str) -> str | None:
-    """Return the text that follows the string closed inside *token_text*.
+    """Return text following a string closed inside a candidate token.
 
-    *value* is the string value generated so far and *token_text* is the
-    decoded text of a candidate token. When appending the token terminates
-    the string, the remainder of the token -- the part after the closing
-    quote -- is returned so the caller can validate it against the
-    punctuation the schema requires next. ``None`` means the token does not
-    close the string.
+    Args:
+        value: The string value generated so far.
+        token_text: The decoded text of a candidate token.
+
+    Returns:
+        The text after the closing quote, or ``None`` if the token does not
+        close the string.
     """
     status, close_index = scan_string(value + token_text)
     if status != STRING_COMPLETE:
@@ -181,11 +215,13 @@ _CONTROL_ESCAPES = {
 
 
 def escape_string_control_chars(value: str) -> str:
-    """Replace raw control characters inside a partial string by escapes.
+    """Replace raw control characters inside a partial string with escapes.
 
-    A model can emit a literal newline or tab where JSON requires the
-    ``\\n`` / ``\\t`` escape. Such a value can never be completed as is,
-    so the characters are rewritten to keep generation recoverable.
+    Args:
+        value: The partial string value to repair.
+
+    Returns:
+        The value with supported control characters replaced by JSON escapes.
     """
     if not value:
         return value
@@ -197,7 +233,18 @@ def escape_string_control_chars(value: str) -> str:
 
 
 def is_complete_value(parameter_type: str, value: str) -> bool:
-    """Return True when value is a complete JSON value of the given type."""
+    """Check whether a value is complete for a declared parameter type.
+
+    Args:
+        parameter_type: The declared type, such as ``number`` or ``string``.
+        value: The generated value text.
+
+    Returns:
+        ``True`` if the value is complete for ``parameter_type``.
+
+    Raises:
+        ValueError: If ``parameter_type`` is unsupported.
+    """
     if parameter_type == "number":
         return is_complete_number(value)
     if parameter_type == "boolean":
@@ -208,7 +255,14 @@ def is_complete_value(parameter_type: str, value: str) -> bool:
 
 
 def is_integer_prefix(value: str) -> bool:
-    """Return True if valuecan still become a JSON integer."""
+    """Check whether a value can still become a JSON integer.
+
+    Args:
+        value: The partially generated integer text.
+
+    Returns:
+        ``True`` if the value is a valid prefix of a JSON integer.
+    """
 
     if value == "-":
         return True

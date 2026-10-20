@@ -1,3 +1,5 @@
+"""Run constrained function-call generation for a set of prompts."""
+
 import argparse
 import json
 import os
@@ -11,10 +13,21 @@ from .utils import closes_string, is_complete_value
 
 
 DEBUG = os.environ.get("CMM_DEBUG") == "1"
+
+
 class FixedTokens:
-    """Tokenized JSON fragments reused by every prompt."""
+    """Store tokenized JSON fragments reused by every prompt.
+
+    Args:
+        model: The language model whose tokenizer encodes the fragments.
+    """
 
     def __init__(self, model: Small_LLM_Model) -> None:
+        """Encode the fixed JSON fragments used during generation.
+
+        Args:
+            model: The language model whose tokenizer encodes the fragments.
+        """
         self.suffix_ids = model.encode(
             ',\n  "parameters": {\n    "'
         )[0].tolist()
@@ -24,7 +37,11 @@ class FixedTokens:
 
 
 def parse_arg() -> argparse.Namespace:
-    """Parse command line arguments."""
+    """Parse command-line arguments.
+
+    Returns:
+        The parsed input, function-definition, and output paths.
+    """
     parser = argparse.ArgumentParser(
         description="Call_me_maybe argument parser"
     )
@@ -53,7 +70,18 @@ def load_func_and_prompt(
     functions_definition: str,
     prompts: str,
 ) -> tuple[list[FunctionDefinition], list[Prompt]]:
-    """Load function definitions and prompts from JSON files."""
+    """Load function definitions and prompts from JSON files.
+
+    Args:
+        functions_definition: Path to the function definitions JSON file.
+        prompts: Path to the prompts JSON file.
+
+    Returns:
+        A tuple containing validated function definitions and prompts.
+
+    Raises:
+        RuntimeError: If either file cannot be read, decoded, or validated.
+    """
     try:
         with open(functions_definition, "r", encoding="utf-8") as function_file:
             raw_function_definitions = json.load(function_file)
@@ -77,7 +105,17 @@ def load_func_and_prompt(
 
 
 def load_inverted_tokens(model: Small_LLM_Model) -> Dict[int, str]:
-    """Return a token_id -> decoded token-text mapping."""
+    """Build a token ID to decoded token-text mapping.
+
+    Args:
+        model: The language model that provides the vocabulary path and decoder.
+
+    Returns:
+        A mapping from each vocabulary token ID to its decoded text.
+
+    Raises:
+        RuntimeError: If the vocabulary file cannot be read or decoded.
+    """
     vocab_path = model.get_path_to_vocab_file()
     try:
         with open(vocab_path, "r", encoding="utf-8") as file:
@@ -98,7 +136,12 @@ def _configure_state(
     schema: JSONStructure,
     fixed_tokens: FixedTokens,
 ) -> None:
-    """Attach reusable fixed token sequences to a prompt's state."""
+    """Attach reusable fixed token sequences to a prompt's state.
+
+    Args:
+        schema: The mutable generation state to configure.
+        fixed_tokens: The tokenized JSON fragments shared by prompts.
+    """
     schema.suffix_ids = fixed_tokens.suffix_ids
     schema.para_sep_ids = fixed_tokens.para_sep_ids
     schema.after_val_sep_ids = fixed_tokens.after_val_sep_ids
@@ -113,10 +156,24 @@ def decode_constraint(
     fixed_tokens: FixedTokens,
     prefix_cache: Dict[tuple[frozenset[str], str], List[int]], # what does prefix cache do
 ) -> Dict[str, Any]:
-    """Generate one constrained function call."""
+    """Generate one constrained function call.
+
+    Args:
+        prompt_obj: The user prompt to interpret.
+        vocab_map: Mapping from token IDs to decoded token text.
+        functions: Function definitions available to the model.
+        model: The language model used for generation.
+        fixed_tokens: Pre-tokenized JSON fragments used by the state machine.
+        prefix_cache: Shared cache for valid name-prefix token IDs.
+
+    Returns:
+        The generated function call decoded as a dictionary.
+
+    Raises:
+        ValueError: If generation cannot produce valid constrained output.
+    """
     state_json = JSONStructure(functions, prefix_cache)
     _configure_state(state_json, fixed_tokens)
-
     func_descriptions = "\n".join(
         (
             f"- {function.name}: {function.description}\n"
@@ -171,8 +228,7 @@ def decode_constraint(
             if state_json.pending_after_val_text:
                 if not state_json.pending_after_val_text.startswith(token_text):
                     raise ValueError(
-                        "Generated token does not match pending fixed text"
-                    )
+                        "Generated token does not match pending fixed text")
                 state_json.pending_after_val_text = (
                     state_json.pending_after_val_text[len(token_text):])
             else:
@@ -203,10 +259,8 @@ def decode_constraint(
                     state_json.fixed_token_ids = state_json.after_val_end_ids
                     state_json.fixed_token_index = 1
                     state_json.state = GenerationState.AFTER_PARAMETER_VAL
-
                 else:
                     state_json.part_para_val += token_text
-
         if DEBUG:
             print(
                 f"state={state_json.state.value} "
@@ -214,9 +268,7 @@ def decode_constraint(
                 f"text={token_text!r} "
                 f"value={state_json.part_para_val!r}"
             )
-
     raw_json = prefix_str + generated_text
-
     try:
         return json.loads(raw_json)
     except json.JSONDecodeError as exc:
@@ -226,6 +278,7 @@ def decode_constraint(
 
 
 def main() -> None:
+    """Run constrained generation for all configured prompts."""
     args = parse_arg()
     model = Small_LLM_Model()
     functions, prompts = load_func_and_prompt(args.functions_definition, args.input)
@@ -238,14 +291,12 @@ def main() -> None:
     failures: List[str] = []
     for each_prompt in prompts:
         try:
-            result_dict = decode_constraint(
-                each_prompt,
-                vocab_map,
-                functions,
-                model,
-                fixed_tokens,
-                prefix_cache,
-            )
+            result_dict = decode_constraint(each_prompt,
+                                            vocab_map,
+                                            functions,
+                                            model,
+                                            fixed_tokens,
+                                            prefix_cache)
         except Exception as exc:
             failures.append(each_prompt.prompt)
             if DEBUG:

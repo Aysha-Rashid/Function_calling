@@ -1,16 +1,18 @@
+"""Data models and mutable state for constrained function-call generation."""
+
 from enum import Enum
 from typing import Any, Dict, List, Set
-
 from pydantic import BaseModel
+from dataclasses import dataclass, field
 
 
 class ParameterSchema(BaseModel):
-    """A class representing a parameter schema."""
+    """Describe the type of a function parameter."""
     type: str
 
 
 class FunctionDefinition(BaseModel):
-    """A class representing a function definition."""
+    """Describe a callable function exposed to the language model."""
     name: str
     description: str
     parameters: Dict[str, ParameterSchema]
@@ -18,26 +20,26 @@ class FunctionDefinition(BaseModel):
 
 
 class Prompt(BaseModel):
-    """A class representing a prompt for a function call."""
+    """Represent one user prompt that requires a function call."""
     prompt: str
 
 
 class Result(BaseModel):
-    """A class representing the result of a function call."""
+    """Represent a generated function-call result."""
     prompt: str
     name: str
     parameters: Dict[str, Any]
 
 
 class FunctionCallResult(BaseModel):
-    """A class representing the result of a function call."""
+    """Represent the prompt, function name, and arguments of a call."""
     prompt: str
     name: str
     parameters: Dict[str, Any]
 
 
 class GenerationState(Enum):
-    """A class representing the different states of the generation process."""
+    """Represent the stages of token-by-token constrained generation."""
     FUNCTION_NAME = "FUNCTION_NAME"
     AFTER_FUNCTION_NAME = "AFTER_FUNCTION_NAME"
     PARAMETER_KEY = "PARAMETER_KEY"
@@ -47,48 +49,48 @@ class GenerationState(Enum):
     END = "END"
 
 
-class JSONStructure(BaseModel):
-    """Runtime state for token-by-token constrained generation."""
-    def __init__(
-        self,
-        functions: List[FunctionDefinition],
-        prefix_cache: Dict[tuple[frozenset[str], str], List[int]] | None = None,
-    ) -> None:
-        self.functions = functions
+@dataclass
+class JSONStructure:
+    """Store mutable state for token-by-token constrained generation.
 
-        self.valid_func_names: Set[str] = {
-            function.name for function in functions
+    Args:
+        functions: Function definitions available during generation.
+        prefix_cache: Shared cache of valid name-prefix token IDs.
+    """
+    functions: List[FunctionDefinition]
+    prefix_cache: Dict[
+        tuple[frozenset[str], str],
+        List[int],
+    ] = field(default_factory=dict)
+    functions_by_name: Dict[str, FunctionDefinition] = field(init=False)
+    valid_func_names: Set[str] = field(init=False)
+    param_keys_by_func: Dict[str, Set[str]] = field(init=False)
+    state: GenerationState = GenerationState.FUNCTION_NAME
+    selected_function: str | None = None
+    selected_function_object: FunctionDefinition | None = None
+    remaining_parameters: Set[str] = field(default_factory=set)
+    cur_para: str | None = None
+    cur_para_type: str | None = None
+    generated_parameters: Set[str] = field(default_factory=set)
+    partial_para: str = ""
+    part_para_val: str = ""
+    suffix_ids: List[int] = field(default_factory=list)
+    para_sep_ids: List[int] = field(default_factory=list)
+    after_val_sep_ids: List[int] = field(default_factory=list)
+    after_val_end_ids: List[int] = field(default_factory=list)
+    fixed_token_ids: List[int] = field(default_factory=list)
+    fixed_token_index: int = 0
+    pending_after_val_text: str = ""
+    string_value_complete: bool = False
+
+    def __post_init__(self) -> None:
+        """Build lookup tables derived from the supplied functions."""
+        self.functions_by_name = {
+            function.name: function
+            for function in self.functions
         }
-        self.param_keys_by_func: Dict[str, Set[str]] = {
-            function.name: set(function.parameters.keys())
-            for function in functions
+        self.valid_func_names = set(self.functions_by_name)
+        self.param_keys_by_func = {
+            function.name: set(function.parameters)
+            for function in self.functions
         }
-
-        # Shared across prompts because function definitions do not change.
-        self.prefix_cache = prefix_cache if prefix_cache is not None else {}
-
-        self.state = GenerationState.FUNCTION_NAME
-
-        self.selected_function: str | None = None
-        self.selected_function_object: FunctionDefinition | None = None
-        self.remaining_parameters: Set[str] = set()
-
-        self.cur_para: str | None = None
-        self.cur_para_type: str | None = None
-        self.generated_parameters: Set[str] = set()
-
-        self.partial_para: str = ""
-        self.part_para_val: str = ""
-
-        # Fixed token sequences used by the state machine.
-        self.suffix_ids: List[int] = []
-        self.para_sep_ids: List[int] = []
-        self.after_val_sep_ids: List[int] = []
-        self.after_val_end_ids: List[int] = []
-
-        self.fixed_token_ids: List[int] = []
-        self.fixed_token_index: int = 0
-
-        # A string token can close a value and also emit punctuation after it.
-        self.pending_after_val_text: str = ""
-        self.string_value_complete = False
