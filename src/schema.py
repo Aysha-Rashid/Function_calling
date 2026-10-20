@@ -1,5 +1,3 @@
-"""Data models and mutable state for constrained function-call generation."""
-
 from enum import Enum
 from typing import Any, Dict, List, Set
 from pydantic import BaseModel
@@ -80,7 +78,7 @@ class JSONStructure:
     after_val_end_ids: List[int] = field(default_factory=list)
     fixed_token_ids: List[int] = field(default_factory=list)
     fixed_token_index: int = 0
-    pending_after_val_text: str = ""
+    pen_after_val_text: str = ""
     string_value_complete: bool = False
 
     def __post_init__(self) -> None:

@@ -1,5 +1,3 @@
-"""Validation helpers for JSON values and token-level generation."""
-
 import numpy as np
 from typing import List
 import re

@@ -11,7 +11,7 @@ debug:
 	CMM_DEBUG=1 uv run python -m pdb -c continue -m src
 
 clean:
-	rm __pycache__ .mypy_cache src/__pycache__ rm -rf data/output
+	rm __pycache__ .mypy_cache src/__pycache__ src/.mypy_cache data/output
 
 lint:
 	flake8 src

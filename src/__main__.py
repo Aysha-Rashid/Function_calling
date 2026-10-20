@@ -1,5 +1,3 @@
-"""Run constrained function-call generation for a set of prompts."""
-
 import argparse
 import json
 import os
@@ -48,19 +46,16 @@ def parse_arg() -> argparse.Namespace:
     parser.add_argument(
         "--input",
         default="data/input/function_calling_tests.json",
-        # type=str,
         help="Path to the function_calling_tests input file",
     )
     parser.add_argument(
         "--functions_definition",
         default="data/input/functions_definition.json",
-        # type=str,
         help="Path to the functions_definition input file",
     )
     parser.add_argument(
         "--output",
         default="data/output/function_calling_results.json",
-        # type=str,
         help="Path to the output file",
     )
     return parser.parse_args()
@@ -83,7 +78,8 @@ def load_func_and_prompt(
         RuntimeError: If either file cannot be read, decoded, or validated.
     """
     try:
-        with open(functions_definition, "r", encoding="utf-8") as function_file:
+        with open(functions_definition,
+                  "r", encoding="utf-8") as function_file:
             raw_function_definitions = json.load(function_file)
             object_function_definitions = [
                 FunctionDefinition(**item)
@@ -108,13 +104,13 @@ def load_inverted_tokens(model: Small_LLM_Model) -> Dict[int, str]:
     """Build a token ID to decoded token-text mapping.
 
     Args:
-        model: The language model that provides the vocabulary path and decoder.
+        model: The language model that provides the vocab path and decoder.
 
     Returns:
-        A mapping from each vocabulary token ID to its decoded text.
+        A mapping from each vocab token ID to its decoded text.
 
     Raises:
-        RuntimeError: If the vocabulary file cannot be read or decoded.
+        RuntimeError: If the vocab file cannot be read or decoded.
     """
     vocab_path = model.get_path_to_vocab_file()
     try:
@@ -122,7 +118,7 @@ def load_inverted_tokens(model: Small_LLM_Model) -> Dict[int, str]:
             raw_json_vocab: Dict[str, int] = json.load(file)
     except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
         raise RuntimeError(
-            f"Error loading vocabulary from {vocab_path!r}: {exc}"
+            f"Error loading vocab from {vocab_path!r}: {exc}"
         ) from exc
 
     token_ids = sorted(raw_json_vocab.values())
@@ -154,7 +150,7 @@ def decode_constraint(
     functions: List[FunctionDefinition],
     model: Small_LLM_Model,
     fixed_tokens: FixedTokens,
-    prefix_cache: Dict[tuple[frozenset[str], str], List[int]], # what does prefix cache do
+    prefix_cache: Dict[tuple[frozenset[str], str], List[int]],
 ) -> Dict[str, Any]:
     """Generate one constrained function call.
 
@@ -192,7 +188,8 @@ def decode_constraint(
     )
     system_prompt = (
         "You are a function calling model.\n"
-        "Choose the correct function and extract its arguments from the user's prompt.\n"
+        "Choose the correct function and extract"
+        "its arguments from the user's prompt.\n"
         "Do not answer or calculate the user's question.\n"
         "For numeric arguments, copy the numbers stated in the "
         "user's prompt exactly as they appear."
@@ -207,15 +204,14 @@ def decode_constraint(
     generated_text = ""
     vocab_items: Sequence[Tuple[int, str]] = tuple(vocab_map.items())
     for _ in range(120):
-        if state_json.state == GenerationState.END:
-            break
         cur_str = prefix_str + generated_text
         logits = model.get_logits_from_input_ids(input_ids + generated_ids)
-        masked_logits = adding_constraint(cur_str, logits, vocab_items, state_json)
-        if state_json.state == GenerationState.END: # why again? ig incase once it comes to adding_constraint and it changes state to end
+        masked_logits = adding_constraint(cur_str, logits,
+                                          vocab_items, state_json)
+        if state_json.state == GenerationState.END:
             break
         if not np.isfinite(masked_logits).any():
-            raise ValueError(f"No valid token available in state {state_json.state}")
+            raise ValueError(f"No valid token available in {state_json.state}")
         next_token_id = int(np.argmax(masked_logits))
         generated_ids.append(next_token_id)
         token_text = model.decode([next_token_id])
@@ -225,12 +221,12 @@ def decode_constraint(
         elif state_json.state == GenerationState.AFTER_PARAMETER_KEY:
             state_json.fixed_token_index += 1
         elif state_json.state == GenerationState.AFTER_PARAMETER_VAL:
-            if state_json.pending_after_val_text:
-                if not state_json.pending_after_val_text.startswith(token_text):
+            if state_json.pen_after_val_text:
+                if not state_json.pen_after_val_text.startswith(token_text):
                     raise ValueError(
                         "Generated token does not match pending fixed text")
-                state_json.pending_after_val_text = (
-                    state_json.pending_after_val_text[len(token_text):])
+                state_json.pen_after_val_text = (
+                    state_json.pen_after_val_text[len(token_text):])
             else:
                 state_json.fixed_token_index += 1
         elif state_json.state == GenerationState.PARAMETER_KEY:
@@ -242,20 +238,22 @@ def decode_constraint(
             if remainder is not None:
                 consumed_len = len(token_text) - len(remainder)
                 state_json.part_para_val += token_text[:consumed_len]
-                state_json.pending_after_val_text = (
+                state_json.pen_after_val_text = (
                     after_val_suffix(state_json)[len(remainder):])
                 state_json.state = GenerationState.AFTER_PARAMETER_VAL
             else:
+                if state_json.cur_para_type is None:
+                    raise ValueError("Current parameter type is not set")
                 value_is_complete = is_complete_value(
                     state_json.cur_para_type,
                     state_json.part_para_val)
                 if (value_is_complete
-                    and next_token_id == state_json.after_val_sep_ids[0]):
+                   and next_token_id == state_json.after_val_sep_ids[0]):
                     state_json.fixed_token_ids = state_json.after_val_sep_ids
                     state_json.fixed_token_index = 1
                     state_json.state = GenerationState.AFTER_PARAMETER_VAL
                 elif (value_is_complete
-                    and next_token_id == state_json.after_val_end_ids[0]):
+                      and next_token_id == state_json.after_val_end_ids[0]):
                     state_json.fixed_token_ids = state_json.after_val_end_ids
                     state_json.fixed_token_index = 1
                     state_json.state = GenerationState.AFTER_PARAMETER_VAL
@@ -270,18 +268,22 @@ def decode_constraint(
             )
     raw_json = prefix_str + generated_text
     try:
-        return json.loads(raw_json)
+        parsed = json.loads(raw_json)
     except json.JSONDecodeError as exc:
-        raise ValueError(
-            "Generated output is not valid JSON"
-        ) from exc
+        raise ValueError("Generated output is not valid JSON") from exc
+
+    if not isinstance(parsed, dict):
+        raise ValueError("Generated output must be a JSON object")
+
+    return parsed
 
 
 def main() -> None:
     """Run constrained generation for all configured prompts."""
     args = parse_arg()
     model = Small_LLM_Model()
-    functions, prompts = load_func_and_prompt(args.functions_definition, args.input)
+    functions, prompts = load_func_and_prompt(args.functions_definition,
+                                              args.input)
     vocab_map = load_inverted_tokens(model)
     prefix_cache: Dict[tuple[frozenset[str], str], List[int]] = {}
     fixed_tokens = FixedTokens(model)

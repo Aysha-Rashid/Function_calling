@@ -1,6 +1,3 @@
-"""Apply token-level constraints during structured JSON generation."""
-
-import os
 from typing import Dict, List, Sequence, Set
 import numpy as np
 from .schema import GenerationState, JSONStructure
@@ -16,10 +13,8 @@ from .utils import (
 )
 
 
-DEBUG = os.environ.get("CMM_DEBUG") == "1"
-DEBUG_STRING_CONSTRAINT = os.environ.get("CMM_DEBUG_STRING") == "1"
-
-
+# DEBUG = os.environ.get("CMM_DEBUG") == "1"
+# DEBUG_STRING_CONSTRAINT = os.environ.get("CMM_DEBUG_STRING") == "1"
 def after_val_suffix(schema: JSONStructure) -> str:
     """Return the fixed JSON text required after the current value.
 
@@ -35,7 +30,6 @@ def after_val_suffix(schema: JSONStructure) -> str:
     """
     if schema.selected_function is None:
         raise ValueError("No function selected")
-
     if schema.remaining_parameters:
         return ',\n    "'
     return "\n  }\n}"
@@ -58,7 +52,6 @@ def constrain_fixed_tokens(
     """
     if index >= len(token_ids):
         return logits
-
     masked_logits = np.full_like(logits, -float("inf"))
     token_id = token_ids[index]
     masked_logits[token_id] = logits[token_id]
@@ -88,12 +81,10 @@ def constrain_fixed_text(
         for token_id, token_text in vocab_items
         if token_text and text.startswith(token_text)
     ]
-
     if not valid_indices:
         raise ValueError(
             f"No token can produce the required text {text!r}"
         )
-
     return apply_token_mask(logits, valid_indices)
 
 
@@ -120,7 +111,6 @@ def _prefix_token_ids(
     cached = cache.get(key)
     if cached is not None:
         return cached
-
     valid_ids = [
         token_id
         for token_id, token_text in vocab_items
@@ -153,14 +143,12 @@ def constrain_para_key(
     """
     if schema.selected_function is None:
         raise ValueError("No function selected")
-
     valid_indices = _prefix_token_ids(
         schema.partial_para,
         schema.remaining_parameters,
         vocab_items,
         schema.prefix_cache,
     )
-
     if not valid_indices:
         raise ValueError(
             "No valid parameter continuation.\n"
@@ -168,7 +156,6 @@ def constrain_para_key(
             f"Allowed parameters: {schema.remaining_parameters}\n"
             f"Partial parameter: {schema.partial_para!r}"
         )
-
     return apply_token_mask(logits, valid_indices)
 
 
@@ -190,14 +177,11 @@ def _is_valid_string_step(
     """
     if not token_text:
         return False
-
     status_code, _ = scan_string(partial_value + token_text)
-
     if status_code == STRING_INCOMPLETE:
         return True
     if status_code != STRING_COMPLETE:
         return False
-
     remainder = closes_string(partial_value, token_text)
     return remainder is not None and suffix.startswith(remainder)
 
@@ -232,7 +216,6 @@ def _debug_string_constraint(
             f"allowed={token_id in valid_set} "
             f"logit={logits[token_id]:.3f}"
         )
-
     top_legal = sorted(
         valid_indices,
         key=lambda token_id: logits[token_id],
@@ -269,21 +252,18 @@ def constrain_para_val(
     partial_value = schema.part_para_val
     valid_indices: List[int] = []
     val_is_complete = False
-
     if para_type == "number":
         for token_id, token_text in vocab_items:
             candidate = partial_value + token_text
             if is_number_prefix(candidate):
                 valid_indices.append(token_id)
         val_is_complete = is_complete_number(partial_value)
-
     elif para_type == "boolean":
         for token_id, token_text in vocab_items:
             candidate = partial_value + token_text
             if "true".startswith(candidate) or "false".startswith(candidate):
                 valid_indices.append(token_id)
         val_is_complete = partial_value in {"true", "false"}
-
     elif para_type == "string":
         if not partial_value:
             opening_ids = [
@@ -294,7 +274,6 @@ def constrain_para_val(
             if not opening_ids:
                 raise ValueError("No opening quote token in vocabulary")
             return apply_token_mask(logits, opening_ids)
-
         suffix = after_val_suffix(schema)
         valid_indices = [
             token_id
@@ -302,29 +281,24 @@ def constrain_para_val(
             if _is_valid_string_step(partial_value, token_text, suffix)
         ]
         val_is_complete = is_complete_string(partial_value)
-
-        if DEBUG_STRING_CONSTRAINT:
-            _debug_string_constraint(
-                schema,
-                partial_value,
-                logits,
-                vocab_items,
-                valid_indices,
-            )
-
+        # if DEBUG_STRING_CONSTRAINT:
+        #     _debug_string_constraint(
+        #         schema,
+        #         partial_value,
+        #         logits,
+        #         vocab_items,
+        #         valid_indices,
+        #     )
     else:
         raise ValueError(f"Unsupported parameter type: {para_type!r}")
-
     if val_is_complete:
         valid_indices.extend(_val_terminator_ids(schema))
-
     if not valid_indices:
         raise ValueError(
             "No valid value continuation.\n"
             f"Type: {para_type!r}\n"
             f"Value: {partial_value!r}"
         )
-
     return apply_token_mask(logits, list(dict.fromkeys(valid_indices)))
 
 
@@ -362,7 +336,7 @@ def adding_constraint(
     Raises:
         ValueError: If the state is inconsistent or no valid token exists.
     """
-    masked_logits = np.asarray(logits, dtype=np.float32) # asarray is to convert list to np.ndarray
+    masked_logits = np.asarray(logits, dtype=np.float32)
     if schema.state == GenerationState.FUNCTION_NAME:
         name_prefix = '"name": "'
         part_name = cur_str.split(name_prefix)[-1]
@@ -386,7 +360,6 @@ def adding_constraint(
         valid_indices = _prefix_token_ids(part_name, schema.valid_func_names,
                                           vocab_items, schema.prefix_cache)
         return apply_token_mask(masked_logits, valid_indices)
-
     if schema.state == GenerationState.AFTER_FUNCTION_NAME:
         if schema.fixed_token_index >= len(schema.fixed_token_ids):
             schema.state = GenerationState.PARAMETER_KEY
@@ -397,7 +370,6 @@ def adding_constraint(
             schema.fixed_token_ids,
             schema.fixed_token_index,
         )
-
     if schema.state == GenerationState.PARAMETER_KEY:
         if schema.partial_para.endswith('"'):
             parameter = schema.partial_para[:-1]
@@ -421,9 +393,7 @@ def adding_constraint(
                     schema.fixed_token_ids,
                     schema.fixed_token_index,
                 )
-
         return constrain_para_key(masked_logits, vocab_items, schema)
-
     if schema.state == GenerationState.AFTER_PARAMETER_KEY:
         if schema.fixed_token_index >= len(schema.fixed_token_ids):
             schema.state = GenerationState.PARAMETER_VAL
@@ -433,18 +403,15 @@ def adding_constraint(
             schema.fixed_token_ids,
             schema.fixed_token_index,
         )
-
     if schema.state == GenerationState.PARAMETER_VAL:
         return constrain_para_val(masked_logits, vocab_items, schema)
-
     if schema.state == GenerationState.AFTER_PARAMETER_VAL:
-        if schema.pending_after_val_text:
+        if schema.pen_after_val_text:
             return constrain_fixed_text(
                 masked_logits,
                 vocab_items,
-                schema.pending_after_val_text,
+                schema.pen_after_val_text,
             )
-
         if schema.fixed_token_index >= len(schema.fixed_token_ids):
             if schema.remaining_parameters:
                 schema.state = GenerationState.PARAMETER_KEY
@@ -454,17 +421,13 @@ def adding_constraint(
                     vocab_items,
                     schema,
                 )
-
             schema.state = GenerationState.END
             return masked_logits
-
         return constrain_fixed_tokens(
             masked_logits,
             schema.fixed_token_ids,
             schema.fixed_token_index,
         )
-
     if schema.state == GenerationState.END:
         return masked_logits
-
     return masked_logits
