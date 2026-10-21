@@ -7,11 +7,11 @@ run:
 	--functions_definition data/input/functions_definition.json \
 	--output data/output/function_calling_results.json
 
-debug:
-	CMM_DEBUG=1 uv run python -m pdb -c continue -m src
+# debug:
+# 	CMM_DEBUG=1 uv run python -m pdb -c continue -m src
 
 clean:
-	rm __pycache__ .mypy_cache src/__pycache__ src/.mypy_cache data/output
+	rm -rf __pycache__ .mypy_cache src/__pycache__ src/.mypy_cache data/output
 
 lint:
 	flake8 src
