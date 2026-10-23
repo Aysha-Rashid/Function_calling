@@ -35,14 +35,29 @@ def get_the_vocab(model : Small_LLM_Model) -> Dict[int, str] :
         The Dict of the tokens id and tokens str
     """
     vocab_path = model.get_path_to_vocab_file()
-    print(vocab_path)
     try:
         with open(vocab_path, "r", encoding="utf-8") as vocabularies:
             raw_json: Dict[int, str] = json.load(vocabularies)
-            print(raw_json)
     except Exception as e:
         print("Error in the vocab map:", e)
-    # return raw_json
+    inverted = {}
+    for token_str, token_id in raw_json.items():
+        inverted[token_id] = token_str
+    return inverted
+
+
+def store_the_functions(arg: argparse.Namespace) -> None:
+    """
+        Store the content of the files in an object of classes
+    """
+    # the function defination 
+    # the prompts
+    try: 
+        with open(arg.functions_definition, "r", encoding="utf-8") as func_file:
+            raw_func: Dict[str, str] = json.load(func_file)
+            print(raw_func)
+    except Exception as e:
+        print("Error in function file:", e)
 
 
 #here we are going to read the files and store their content in an object of their class
@@ -51,6 +66,7 @@ def initialize_everything() -> None:
         Intialize the object of all the classes with the content of the files
     """
     arg = parse_arg()
+    store_the_functions(arg)
     model = Small_LLM_Model()
     vocab_map = get_the_vocab(model)
     # print(vocab_map)
