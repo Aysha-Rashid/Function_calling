@@ -1,8 +1,9 @@
 import argparse
 from llm_sdk import Small_LLM_Model
 from src.schema import FunctionDefinition, Prompts, Tokenizer
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Any
 import json
+import numpy as np
 
 
 def parse_arg() -> argparse.Namespace:
@@ -47,9 +48,52 @@ def get_the_vocab(model : Small_LLM_Model) -> Dict[int, str] :
     return inverted
 
 
-# def decoding_constraint(prompt: str, functions: FunctionDefinition, vocab_map: Dict[int, str], model: Small_LLM_Model) -> Dict[str, Any]:
+def adding_constraint(logits: list[int], state_json: DecodingStateJson, current_str: str, vocab_map: Dict[int, str], model: Small_LLM_Model) -> list[int]:
+    """
+
+    """
 
 
+
+def decoding_constraint(prompt: str, functions: FunctionDefinition, vocab_map: Dict[int, str], model: Small_LLM_Model) -> Dict[str, Any]:
+    """
+        token-level state decoding contraint
+    """
+    func_descriptions = "\n".join(
+        (
+            f"- {function.name}: {function.description}\n"
+            "  Parameters:\n"
+            + "\n".join(
+                f"    - {param_name}: {param_schema.type}"
+                for param_name, param_schema in function.parameters.items()
+            )
+        )
+        for function in functions
+    )
+    print("check the list of functions: ", func_descriptions)
+    user_prompt = (
+        "You are a function calling model.\n"
+        "Using the list of function below:"
+        f"{func_descriptions} to answer the user query:"
+        f"{prompt}\n"
+        "and output the answer in this format:"
+        "{\n"
+        f' "prompt": "{prompt}",\n "name": "'
+    )
+    print("does this work? ", user_prompt)
+    # state_json = DecodingStateJson()
+    input_ids = model.encode(user_prompt)[0].tolist()
+    state_json = DecodingStateJson()
+    generated : List[int] = []
+    for _ in range(100):
+        logits = model.get_logits_from_input_ids(input_ids + generated)
+        current_str = model.decode(generated)
+        masked_logit = adding_constraint(logits, state_json, current_str, vocab_map, model)
+        print("checking for token id:", logits)
+        next_token_id = int(np.argmax(masked_logits))
+        generated.append(next_token_id)
+        print("decode:", model.decode(generated))
+        
 
 
 def start_decoding_for_each_prompt(
@@ -67,12 +111,12 @@ def start_decoding_for_each_prompt(
         # reuse prompt encode
 
     # functions_definition
-    merge_path = model.get_path_to_merges_file()
-    tokenizer_path = model.get_path_to_tokenizer_file()
-    print(merge_path)
-    print(tokenizer_path)
-    lister = Tokenizer(vocab_map)
-    print(lister.encoder("hello"))
+    # merge_path = model.get_path_to_merges_file()
+    # tokenizer_path = model.get_path_to_tokenizer_file()
+    # print(merge_path)
+    # print(tokenizer_path)
+    # lister = Tokenizer(vocab_map)
+    # print(lister.encoder("hello"))
     # prefix = ()
 
     #prefix is something that has the defined prompts that needs to be used?
@@ -83,7 +127,7 @@ def start_decoding_for_each_prompt(
         # string_list_functions = [each_function for each_function in functions]
         # print("checking each function:", type(string_list_functions))
         # print("checking each string:", string_each_prompt)
-        # result = decoding_constraint(string_each_prompt, functions, vocab_map, model)
+        result = decoding_constraint(string_each_prompt, functions, vocab_map, model)
     # return result
 
 

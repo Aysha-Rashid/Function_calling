@@ -3,10 +3,13 @@ from pydantic import BaseModel as base
 # from dataclass import dataclass, field
 
 
+class Paraschema(base):
+    type: str
+
 class FunctionDefinition(base):
     name: str
     description: str
-    parameters: Dict[str, Any]
+    parameters: Dict[str, Paraschema]
     returns: Dict[str, Any]
 
 
@@ -34,11 +37,11 @@ class Tokenizer:
         self.vocab_map = vocab_map
         self.token_to_id = {
             token_str: token_id
-            for token_id, token_str in vocab_map
+            for token_str, token_id in self.vocab_map.items()
         }
         self.id_to_token = {
             token_id: token_str
-            for token_id, token_str in vocab_map
+            for token_id, token_str in self.vocab_map.items()
         }
 
 
