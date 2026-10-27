@@ -56,10 +56,20 @@ def get_the_vocab(model : Small_LLM_Model) -> Dict[int, str] :
 #         else
 #             new_list[each_token] == 
 def prefix_token_id(prefix: str, logits: list[float], current_text: str, vocab_map: dict[int, str], model: Small_LLM_Model):
+    valid_str = []
     for token_id, token_str in vocab_map.items():
-        print("checking the token_str:", token_str)
-        if token_str == prefix:
+        # print("checking the token_str:", token_str)
+        if prefix.startswith(token_str):
+            valid_str.append(token_id)
             print("come here bro")
+    if valid_str:
+        print("checking the valid_str:", valid_str)
+        for i in range(len(logits)):
+            if i not in valid_str:
+                logits[i] = -math.inf
+    else:
+        print("no valid token found")
+    return logits
 
 
 def adding_constraint(logits: list[float], state_json: DecodingStateJson, current_str: str, vocab_map: Dict[int, str], model: Small_LLM_Model) -> list[float]:
@@ -80,7 +90,7 @@ def adding_constraint(logits: list[float], state_json: DecodingStateJson, curren
                 if partial_name == token_str:
                 #     valid_index.append(token_id)
                     print("what is the valid_index in here:", valid_index)
-        prefix_token_id(name_prefix, logits, current_str, vocab_map, model)
+        return prefix_token_id(name_prefix, logits, current_str, vocab_map, model)
         # return masked_logit
            
 
@@ -118,12 +128,13 @@ def decoding_constraint(prompt: str, functions: FunctionDefinition, vocab_map: D
     for _ in range(100):
         logits = model.get_logits_from_input_ids(input_ids + generated)
         current_str = model.decode(generated)
-        masked_logit = adding_constraint(logits, state_json, current_str, vocab_map, model)
+        masked_logits = adding_constraint(logits, state_json, current_str, vocab_map, model)
         # print("checking for token id:", logits)
-        # next_token_id = int(np.argmax(masked_logits))
-        # generated.append(next_token_id)
-        # print("decode:", model.decode(generated))
-        break
+        next_token_id = int(np.argmax(masked_logits))
+        generated.append(next_token_id)
+        print("decode:", model.decode(generated))
+        print("prompt:", prompt)
+        # break
         
 
 
@@ -151,15 +162,16 @@ def start_decoding_for_each_prompt(
     # prefix = ()
 
     #prefix is something that has the defined prompts that needs to be used?
-    for each_prompt in prompts:
-        # convert prompt into string
-        # convert function definition into string
-        string_each_prompt = each_prompt.prompt
-        # string_list_functions = [each_function for each_function in functions]
-        # print("checking each function:", type(string_list_functions))
-        # print("checking each string:", string_each_prompt)
-        result = decoding_constraint(string_each_prompt, functions, vocab_map, model)
-    # return result
+    # for each_prompt in prompts:
+    #     # convert prompt into string
+    #     # convert function definition into string
+    #     string_each_prompt = each_prompt.prompt
+    #     # string_list_functions = [each_function for each_function in functions]
+    #     # print("checking each function:", type(string_list_functions))
+    #     # print("checking each string:", string_each_prompt)
+    #     result = decoding_constraint(string_each_prompt, functions, vocab_map, model)
+    # # return result
+    result = decoding_constraint(prompts[0].prompt, functions, vocab_map, model)
 
 
 def store_the_functions(arg: argparse.Namespace) -> tuple[list[FunctionDefinition], list[Prompts]]:
