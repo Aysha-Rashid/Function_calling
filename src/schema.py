@@ -1,8 +1,7 @@
 from typing import Any, Dict, Optional
 from pydantic import BaseModel as base
 from enum import Enum
-# from dataclass import dataclass, field
-
+from dataclasses import dataclass, field
 
 class Paraschema(base):
     type: str
@@ -28,12 +27,19 @@ class CurrentState(Enum):
     END = "Needs to end the generation"
 
 
-# @dataclass
+@dataclass
 class DecodingStateJson():
     phase: CurrentState = CurrentState.FUNCTION_NAME
     selected_function_name: Optional[str] = None
     parameter_index: int = 0
     generated_text: str = ""
+    Functions_list: list[FunctionDefinition] = field(default_factory=list)
+    valid_function_name: dict[str, FunctionDefinition] = field(default_factory=dict, init=False)
+    selected_function: str = ""
+    parameter_key: dict[str, str] = field(default_factory=dict, init=False)
+    parameter_value: dict[Any, Any] = field(default_factory=dict, init=False)
+    def __post_init__(self):
+        self.valid_function_name = {func.name: func for func in self.Functions_list}
 
 
 #this is after the whole generation (to validate whether the format is right)

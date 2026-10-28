@@ -55,47 +55,74 @@ def get_the_vocab(model : Small_LLM_Model) -> Dict[int, str] :
 #             new_list[valid_token] = masked_logit[each_token]
 #         else
 #             new_list[each_token] == 
-def prefix_token_id(prefix: str, logits: list[float], current_text: str, vocab_map: dict[int, str], model: Small_LLM_Model):
-    valid_str = []
+def prefix_token_id(partial: str, logits: list[float], current_text: str, vocab_map: dict[int, str], target: dict[str, str]):
+    valid_ids = []
     for token_id, token_str in vocab_map.items():
-        # print("checking the token_str:", token_str)
-        if prefix.startswith(token_str):
-            valid_str.append(token_id)
-            print("come here bro")
-    if valid_str:
-        print("checking the valid_str:", valid_str)
-        for i in range(len(logits)):
-            if i not in valid_str:
-                logits[i] = -math.inf
+        # print(f"key: {target.keys()}")
+        for key in target.keys():
+            # print(f"partial: {partial} + token_str: {token_str}")
+            combined = partial + token_str
+            if (key + '"').startswith(combined):
+                print("partial + token_str: if the key is correct:")
+                print(f"-----------------key:{key}----------------")
+                print(f"-----------------Combined(partial + token_str): {partial} + {token_str}")
+                valid_ids.append(token_id)
+                break
+    # saving the token_id from the logits list
+    saving_logit = {token_id: logits[token_id] for token_id in valid_ids}
+    # making everything in the logits list as -infinite
+    logits[:] = [float('-inf')] * len(logits)
+    if valid_ids:
+        for token_id, scores in saving_logit.items():
+            print(f"token_id:{token_id}, token_str:{vocab_map[token_id]}")
+            logits[token_id] = scores
     else:
         print("no valid token found")
     return logits
 
 
-def adding_constraint(logits: list[float], state_json: DecodingStateJson, current_str: str, vocab_map: Dict[int, str], model: Small_LLM_Model) -> list[float]:
+# def masked_logit_logic(logits: list[float], valid_ids: list[int]) -> list[float]:
+#     """
+
+#     """
+    
+
+
+def adding_constraint(logits: list[float], state_json: DecodingStateJson, current_str: str, vocab_map: Dict[int, str], functions: FunctionDefinition) -> list[float]:
     """
 
     """
     print("checking the current state:", state_json.phase)
-    name_prefix = '"name": '
+    name_prefix = '"name": "'
     parameter_prefix = ',\n"    parameters":{'
-    
+    valid_index = []
     if (state_json.phase == CurrentState.FUNCTION_NAME):
-        # if current_str is None:
-        partial_name = current_str.split(name_prefix)[-1]
-        valid_index = []
-        print(partial_name)
+        partial_name = current_str.split(name_prefix)[-1] 
+        # here the double qoute in the beginning is not being passed and its alright
+        print(f"---------partial_name: {partial_name}----------")
         if partial_name.endswith('"'):
-            for token_id, token_str in vocab_map.items():
-                if partial_name == token_str:
-                #     valid_index.append(token_id)
-                    print("what is the valid_index in here:", valid_index)
-        return prefix_token_id(name_prefix, logits, current_str, vocab_map, model)
+            state_json.phase = CurrentState.AFTER_FUNCTION_NAME
+            print("\n\n\nThe function name ended with double qoutes")
+            print(f"function name: {partial_name}")
+            state_json.selected_function = partial_name[:-1]
+            print(f"-------------- selected function name: {state_json.selected_function}------------")
+            selected_function_object = state_json.valid_function_name.get(state_json.selected_function)
+            print(f"\n\n\nthe object of the selected_function: {selected_function_object}")
+            state_json.parameter_key = selected_function_object.parameters.keys()
+            print(f"checking the parameters_key: {state_json.parameter_key}")
+            state_json.parameter_value = selected_function_object.parameters.values()
+            print(f"checking the parameters_value: {state_json.parameter_value}")
+            # state_json.parameter_values = 
+            # i think i might have to put ',\n' in here to continue to the next step
+            # return (masked_logit_logic(logits, valid_ids))
+        return prefix_token_id(partial_name, logits, current_str, vocab_map, state_json.valid_function_name)
         # return masked_logit
-           
+    elif (state_json.phase == CurrentState.AFTER_FUNCTION_NAME):
+        print("\n\n\n Comes here after choosing the function name")
 
 
-def decoding_constraint(prompt: str, functions: FunctionDefinition, vocab_map: Dict[int, str], model: Small_LLM_Model) -> Dict[str, Any]:
+
+def decoding_constraint(prompt: str, functions: FunctionDefinition, vocab_map: Dict[int, str], model: Small_LLM_Model, state_json: DecodingStateJson) -> Dict[str, Any]:
     """
         token-level state decoding contraint
     """
@@ -123,12 +150,12 @@ def decoding_constraint(prompt: str, functions: FunctionDefinition, vocab_map: D
     # print("does this work? ", user_prompt)
     # state_json = DecodingStateJson()
     input_ids = model.encode(user_prompt)[0].tolist()
-    state_json = DecodingStateJson()
+    # state_json = DecodingStateJson()
     generated : List[int] = []
     for _ in range(100):
         logits = model.get_logits_from_input_ids(input_ids + generated)
         current_str = model.decode(generated)
-        masked_logits = adding_constraint(logits, state_json, current_str, vocab_map, model)
+        masked_logits = adding_constraint(logits, state_json, current_str, vocab_map, functions)
         # print("checking for token id:", logits)
         next_token_id = int(np.argmax(masked_logits))
         generated.append(next_token_id)
@@ -142,7 +169,8 @@ def start_decoding_for_each_prompt(
     functions: FunctionDefinition,
     prompts: Prompts,
     model: Small_LLM_Model,
-    vocab_map: Dict[int, str]
+    vocab_map: Dict[int, str],
+    state_json: DecodingStateJson
     ) -> None:
     """Start decoding for each prompt"""
     # prefix?? caches?? encoing?? decoding??
@@ -171,7 +199,8 @@ def start_decoding_for_each_prompt(
     #     # print("checking each string:", string_each_prompt)
     #     result = decoding_constraint(string_each_prompt, functions, vocab_map, model)
     # # return result
-    result = decoding_constraint(prompts[0].prompt, functions, vocab_map, model)
+    prompt_test = "What is the sum of 2 and 3?"
+    result = decoding_constraint(prompt_test, functions, vocab_map, model, state_json)
 
 
 def store_the_functions(arg: argparse.Namespace) -> tuple[list[FunctionDefinition], list[Prompts]]:
@@ -205,6 +234,12 @@ def initialize_everything() -> None:
     """
     arg = parse_arg()
     function, prompt = store_the_functions(arg)
+    print("########checking initial function object########")
+    valid_function_name = {func.name: func for func in function}
+    state_json = DecodingStateJson(Functions_list=function)
+    # state_json.Functions_list = function
+    # print(f"checking the function_list in: {state_json.Functions_list}" )
+    # print(f"function_name: {state_json.valid_function_name.keys()}")
     # call_schema = functions_to_call_schema(function)
     # print(json.dumps(call_schema, indent=2))
     # valid_call = {
@@ -220,7 +255,7 @@ def initialize_everything() -> None:
     model = Small_LLM_Model()
     vocab_map = get_the_vocab(model)
     #start for each prompt
-    result = start_decoding_for_each_prompt(function, prompt, model, vocab_map)
+    result = start_decoding_for_each_prompt(function, prompt, model, vocab_map, state_json)
     # try:
     #     with open(arg.output, "w", encoding="utf-8") as output:
     #         output = result
