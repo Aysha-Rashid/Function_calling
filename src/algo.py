@@ -49,29 +49,23 @@ def get_the_vocab(model : Small_LLM_Model) -> Dict[int, str] :
     return inverted
 
 
-# def masked_tokens(masked_logit: list[float], valid_token: list[int]) -> list[int]:
-#     for each_token in masked_logit:
-#         if masked_logit[each_token] == valid_token:
-#             new_list[valid_token] = masked_logit[each_token]
-#         else
-#             new_list[each_token] == 
-def prefix_token_id(logits, partial_text, required_text, vocab_map):
-    valid_token_ids = []
-    print("--------------prefix_token_id function-------------")
-    print(f"partial_text : {required_text}")
-    for token_id, token_str in vocab_map.items():
-        combined = partial_text + token_str
-        if required_text.startswith(combined):
-            print(f"combined: {combined}\npartial_text: {partial_text}\ntoken_str: {token_str}")
-            valid_token_ids.append(token_id)
-
-    # Apply the same logit-masking approach as prefix_token_id().
-    masked_logits = np.full_like(logits, -np.inf)
-
-    for token_id in valid_token_ids:
-        masked_logits[token_id] = logits[token_id]
-
-    return masked_logits
+def contraint_mask(logits: list[float], valid_ids: list[int]) -> list[float]:
+    """
+        Mask the logits based on the valid token ids
+    Args:
+        logits: The list of logits from the model
+        valid_ids: The list of valid token ids
+    Returns:
+        The masked logits
+    """
+    # making everything in the logits list as -infinite
+    logits[:] = [float('-inf')] * len(logits)
+    if valid_ids:
+        for token_id in valid_ids:
+            logits[token_id] = 0.0  # or any other value you want to assign to valid tokens
+    else:
+        print("no valid token found")
+    return logits
 
 
 def function_token_id(partial: str, logits: list[float], current_text: str, vocab_map: dict[int, str], target: dict[str, str]):
@@ -88,16 +82,7 @@ def function_token_id(partial: str, logits: list[float], current_text: str, voca
                 valid_ids.append(token_id)
                 break
     # saving the token_id from the logits list
-    saving_logit = {token_id: logits[token_id] for token_id in valid_ids}
-    # making everything in the logits list as -infinite
-    logits[:] = [float('-inf')] * len(logits)
-    if valid_ids:
-        for token_id, scores in saving_logit.items():
-            print(f"token_id:{token_id}, token_str:{vocab_map[token_id]}")
-            logits[token_id] = scores
-    else:
-        print("no valid token found")
-    return logits
+    return (contraint_mask(logits, valid_ids))
 
 
 # def masked_logit_logic(logits: list[float], valid_ids: list[int]) -> list[float]:
@@ -107,13 +92,13 @@ def function_token_id(partial: str, logits: list[float], current_text: str, voca
     
 
 
-def adding_constraint(logits: list[float], state_json: DecodingStateJson, current_str: str, vocab_map: Dict[int, str], functions: FunctionDefinition) -> list[float]:
+def adding_constraint(logits: list[float], state_json: DecodingStateJson, current_str: str, vocab_map: Dict[int, str], model: Small_LLM_Model, functions: FunctionDefinition) -> list[float]:
     """
 
     """
     print("checking the current state:", state_json.phase)
     name_prefix = '"name": "'
-    parameter_prefix = ',\n"    parameters":{'
+    parameter_prefix = ',"parameters":{'
     valid_index = []
     if (state_json.phase == CurrentState.FUNCTION_NAME):
         partial_name = current_str.split(name_prefix)[-1] 
@@ -139,11 +124,12 @@ def adding_constraint(logits: list[float], state_json: DecodingStateJson, curren
         # return masked_logit
     if (state_json.phase == CurrentState.AFTER_FUNCTION_NAME):
         print("\n\n\n Comes here after choosing the function name")
-        function_prefix = state_json.selected_function + '"'
-        partial_text = current_str[len(function_prefix):]
-        print(f"content of partial_text: {partial_text}\ndatatype of the partial_text{type(partial_text)}")
-        return prefix_token_id(logits, partial_text, parameter_prefix, vocab_map)
-
+        prefix_id = model.encode(parameter_prefix)
+        state_json.phase = CurrentState.PARAMETER_KEY
+        return contraint_mask(logits, prefix_id[0].tolist())
+    if (state_json.phase == CurrentState.PARAMETER_KEY):
+        prefix = model.encode("}")
+        return contraint_mask(logits, prefix[0].tolist())
 
 
 def decoding_constraint(prompt: str, functions: FunctionDefinition, vocab_map: Dict[int, str], model: Small_LLM_Model, state_json: DecodingStateJson) -> Dict[str, Any]:
@@ -179,12 +165,16 @@ def decoding_constraint(prompt: str, functions: FunctionDefinition, vocab_map: D
     for _ in range(25):
         logits = model.get_logits_from_input_ids(input_ids + generated)
         current_str = model.decode(generated)
-        masked_logits = adding_constraint(logits, state_json, current_str, vocab_map, functions)
+        print("current_str:", repr(current_str))
+        masked_logits = adding_constraint(logits, state_json, current_str, vocab_map, model, functions)
         # print("checking for token id:", logits)
         next_token_id = int(np.argmax(masked_logits))
         generated.append(next_token_id)
         print("decode:", model.decode(generated))
         print("prompt:", prompt)
+        if model.decode(generated).endswith("}"):
+            print("The json format ended")
+            break
         # break
         
 
