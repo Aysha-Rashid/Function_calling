@@ -38,6 +38,8 @@ class DecodingStateJson():
     selected_function: str = ""
     parameter_key: dict[str, str] = field(default_factory=dict, init=False)
     parameter_value: dict[Any, Any] = field(default_factory=dict, init=False)
+    prefix_size: int = 0
+    prefix_index: int = 0
     def __post_init__(self):
         self.valid_function_name = {func.name: func for func in self.Functions_list}
 
