@@ -55,7 +55,25 @@ def get_the_vocab(model : Small_LLM_Model) -> Dict[int, str] :
 #             new_list[valid_token] = masked_logit[each_token]
 #         else
 #             new_list[each_token] == 
-def prefix_token_id(partial: str, logits: list[float], current_text: str, vocab_map: dict[int, str], target: dict[str, str]):
+def prefix_token_id(logits, partial_text, required_text, vocab_map):
+    valid_token_ids = []
+
+    for token_id, token_str in vocab_map.items():
+        combined = partial_text + token_str
+
+        if required_text.startswith(combined):
+            valid_token_ids.append(token_id)
+
+    # Apply the same logit-masking approach as prefix_token_id().
+    masked_logits = np.full_like(logits, -np.inf)
+
+    for token_id in valid_token_ids:
+        masked_logits[token_id] = logits[token_id]
+
+    return masked_logits
+
+
+def function_token_id(partial: str, logits: list[float], current_text: str, vocab_map: dict[int, str], target: dict[str, str]):
     valid_ids = []
     for token_id, token_str in vocab_map.items():
         # print(f"key: {target.keys()}")
@@ -100,25 +118,27 @@ def adding_constraint(logits: list[float], state_json: DecodingStateJson, curren
         partial_name = current_str.split(name_prefix)[-1] 
         # here the double qoute in the beginning is not being passed and its alright
         print(f"---------partial_name: {partial_name}----------")
-        if partial_name.endswith('"'):
-            state_json.phase = CurrentState.AFTER_FUNCTION_NAME
-            print("\n\n\nThe function name ended with double qoutes")
-            print(f"function name: {partial_name}")
-            state_json.selected_function = partial_name[:-1]
-            print(f"-------------- selected function name: {state_json.selected_function}------------")
-            selected_function_object = state_json.valid_function_name.get(state_json.selected_function)
-            print(f"\n\n\nthe object of the selected_function: {selected_function_object}")
-            state_json.parameter_key = selected_function_object.parameters.keys()
-            print(f"checking the parameters_key: {state_json.parameter_key}")
-            state_json.parameter_value = selected_function_object.parameters.values()
-            print(f"checking the parameters_value: {state_json.parameter_value}")
-            # state_json.parameter_values = 
-            # i think i might have to put ',\n' in here to continue to the next step
-            # return (masked_logit_logic(logits, valid_ids))
-        return prefix_token_id(partial_name, logits, current_str, vocab_map, state_json.valid_function_name)
+        if not partial_name.endswith('"'):
+            return function_token_id(partial_name, logits, current_str, vocab_map, state_json.valid_function_name)
+        state_json.phase = CurrentState.AFTER_FUNCTION_NAME
+        print("\n\n\nThe function name ended with double qoutes")
+        print(f"function name: {partial_name}")
+        state_json.selected_function = partial_name[:-1]
+        # print(f"-------------- selected function name: {state_json.selected_function}------------")
+        selected_function_object = state_json.valid_function_name.get(state_json.selected_function)
+        # print(f"\n\n\nthe object of the selected_function: {selected_function_object}")
+        state_json.parameter_key = dict(selected_function_object.parameters).keys()
+        print(f"checking the parameters_key: {state_json.parameter_key}")
+        state_json.parameter_value = dict(selected_function_object.parameters).values()
+        print(f"checking the parameters_value: {state_json.parameter_value}")
+
+        # state_json.parameter_values = 
+        # i think i might have to put ',\n' in here to continue to the next step
+        # return (masked_logit_logic(logits, valid_ids))
         # return masked_logit
     elif (state_json.phase == CurrentState.AFTER_FUNCTION_NAME):
         print("\n\n\n Comes here after choosing the function name")
+        return prefix_token_id(logits, current_str, parameter_prefix, vocab_map)
 
 
 
@@ -152,7 +172,7 @@ def decoding_constraint(prompt: str, functions: FunctionDefinition, vocab_map: D
     input_ids = model.encode(user_prompt)[0].tolist()
     # state_json = DecodingStateJson()
     generated : List[int] = []
-    for _ in range(100):
+    for _ in range(50):
         logits = model.get_logits_from_input_ids(input_ids + generated)
         current_str = model.decode(generated)
         masked_logits = adding_constraint(logits, state_json, current_str, vocab_map, functions)
