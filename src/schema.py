@@ -36,8 +36,8 @@ class DecodingStateJson():
     Functions_list: list[FunctionDefinition] = field(default_factory=list)
     valid_function_name: dict[str, FunctionDefinition] = field(default_factory=dict, init=False)
     selected_function: str = ""
-    parameter_key: dict[str, str] = field(default_factory=dict, init=False)
-    parameter_value: dict[Any, Any] = field(default_factory=dict, init=False)
+    parameter_key: list[str] = field(default_factory=list, init=False)
+    parameter_value: list[Any] = field(default_factory=list, init=False)
     prefix_size: int = 0
     prefix_index: int = 0
     def __post_init__(self):

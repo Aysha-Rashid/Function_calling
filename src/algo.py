@@ -120,23 +120,30 @@ def adding_constraint(logits: list[float], state_json: DecodingStateJson, curren
         state_json.prefix_size = len(parameter_prefix)
         state_json.prefix_index
         selected_function_object = state_json.valid_function_name.get(state_json.selected_function)
-        state_json.parameter_key = list(selected_function_object.parameters).keys()
+        state_json.parameter_key = list(selected_function_object.parameters.keys())
         print(f"checking the parameters_key: {state_json.parameter_key}")
-        state_json.parameter_value = list(selected_function_object.parameters).values()
+        state_json.parameter_value = list(selected_function_object.parameters.values())
         print(f"checking the parameters_value: {state_json.parameter_value}")
     if (state_json.phase == CurrentState.AFTER_FUNCTION_NAME):
         print("\n\n\n Comes here after choosing the function name")
-        if state_json.prefix_size > state_json.prefix_index:
+        print(f"the size: {state_json.prefix_size}, index: {state_json.prefix_index}")
+        prefix_id = model.encode(parameter_prefix)
+        if len(prefix_id) > state_json.prefix_index:
             prefix_id = model.encode(parameter_prefix)
             state_json.prefix_size -= 1
             return contraint_prefix_mask(logits, prefix_id[0].tolist(), state_json)
         else:
             # prefix_size in here depends on the size of the key of first in the list
-            state_json.prefix_size = state_json.parameter_key[0]
+            print("the datatype of parameter key:", type(state_json.parameter_key[0]))
+            state_json.prefix_size = 10
             state_json.prefix_index = 0
             state_json.phase = CurrentState.PARAMETER_KEY
     if (state_json.phase == CurrentState.PARAMETER_KEY):
-        
+        if state_json.prefix_size > state_json.prefix_index:
+            para_part = model.encode(state_json.parameter_key[0])
+            state_json.prefix_size -= 1
+            print("checking para_part:", para_part)
+            return contraint_prefix_mask(logits, para_part[0].tolist(), state_json)
     #     prefix = model.encode("}")
     #     return contraint_prefix_mask(logits, prefix[0].tolist(), state_json)
 
