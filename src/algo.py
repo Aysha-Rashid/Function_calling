@@ -57,11 +57,12 @@ def get_the_vocab(model : Small_LLM_Model) -> Dict[int, str] :
 #             new_list[each_token] == 
 def prefix_token_id(logits, partial_text, required_text, vocab_map):
     valid_token_ids = []
-
+    print("--------------prefix_token_id function-------------")
+    print(f"partial_text : {required_text}")
     for token_id, token_str in vocab_map.items():
         combined = partial_text + token_str
-
         if required_text.startswith(combined):
+            print(f"combined: {combined}\npartial_text: {partial_text}\ntoken_str: {token_str}")
             valid_token_ids.append(token_id)
 
     # Apply the same logit-masking approach as prefix_token_id().
@@ -131,14 +132,17 @@ def adding_constraint(logits: list[float], state_json: DecodingStateJson, curren
         print(f"checking the parameters_key: {state_json.parameter_key}")
         state_json.parameter_value = dict(selected_function_object.parameters).values()
         print(f"checking the parameters_value: {state_json.parameter_value}")
-
+        # for token_id, token_str
         # state_json.parameter_values = 
         # i think i might have to put ',\n' in here to continue to the next step
         # return (masked_logit_logic(logits, valid_ids))
         # return masked_logit
-    elif (state_json.phase == CurrentState.AFTER_FUNCTION_NAME):
+    if (state_json.phase == CurrentState.AFTER_FUNCTION_NAME):
         print("\n\n\n Comes here after choosing the function name")
-        return prefix_token_id(logits, current_str, parameter_prefix, vocab_map)
+        function_prefix = state_json.selected_function + '"'
+        partial_text = current_str[len(function_prefix):]
+        print(f"content of partial_text: {partial_text}\ndatatype of the partial_text{type(partial_text)}")
+        return prefix_token_id(logits, partial_text, parameter_prefix, vocab_map)
 
 
 
@@ -172,7 +176,7 @@ def decoding_constraint(prompt: str, functions: FunctionDefinition, vocab_map: D
     input_ids = model.encode(user_prompt)[0].tolist()
     # state_json = DecodingStateJson()
     generated : List[int] = []
-    for _ in range(50):
+    for _ in range(25):
         logits = model.get_logits_from_input_ids(input_ids + generated)
         current_str = model.decode(generated)
         masked_logits = adding_constraint(logits, state_json, current_str, vocab_map, functions)
