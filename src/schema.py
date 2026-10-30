@@ -31,15 +31,19 @@ class CurrentState(Enum):
 class DecodingStateJson():
     phase: CurrentState = CurrentState.FUNCTION_NAME
     selected_function_name: Optional[str] = None
-    parameter_index: int = 0
+    # parameter_index: int = 0
     generated_text: str = ""
     Functions_list: list[FunctionDefinition] = field(default_factory=list)
     valid_function_name: dict[str, FunctionDefinition] = field(default_factory=dict, init=False)
     selected_function: str = ""
     parameter_key: list[str] = field(default_factory=list, init=False)
     parameter_value: list[Any] = field(default_factory=list, init=False)
+    parameter_index: int = 0
+    parameter_key_ids: list[int] = field(default_factory=list, init=False)
+    parameter_value_ids: list[int] = field(default_factory=list, init=False)
     prefix_size: int = 0
     prefix_index: int = 0
+    prefix_id: list = field(default_factory=list)
     def __post_init__(self):
         self.valid_function_name = {func.name: func for func in self.Functions_list}
 

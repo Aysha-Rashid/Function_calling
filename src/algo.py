@@ -117,33 +117,62 @@ def adding_constraint(logits: list[float], state_json: DecodingStateJson, curren
         print("\n\n\nThe function name ended with double qoutes")
         print(f"function name: {partial_name}")
         state_json.selected_function = partial_name[:-1]
-        state_json.prefix_size = len(parameter_prefix)
-        state_json.prefix_index
+        state_json.prefix_id = model.encode(parameter_prefix)
+        state_json.prefix_index = 0
+        state_json.prefix_size = len(state_json.prefix_id[0])
         selected_function_object = state_json.valid_function_name.get(state_json.selected_function)
         state_json.parameter_key = list(selected_function_object.parameters.keys())
         print(f"checking the parameters_key: {state_json.parameter_key}")
         state_json.parameter_value = list(selected_function_object.parameters.values())
         print(f"checking the parameters_value: {state_json.parameter_value}")
     if (state_json.phase == CurrentState.AFTER_FUNCTION_NAME):
-        print("\n\n\n Comes here after choosing the function name")
-        print(f"the size: {state_json.prefix_size}, index: {state_json.prefix_index}")
-        prefix_id = model.encode(parameter_prefix)
-        if len(prefix_id) > state_json.prefix_index:
-            prefix_id = model.encode(parameter_prefix)
+        # print("\n\n\n Comes here after choosing the function name")
+        # print(f"the size: {state_json.prefix_size}, index: {state_json.prefix_index}")
+        # print(f"\n\n\n\n checking the size of prefix_size: {len(state_json.prefix_id[0])}, the prefix_id: {state_json.prefix_id}\n\n\n\n")
+        if state_json.prefix_size > 0:
+            # prefix_id = model.encode(parameter_prefix)
             state_json.prefix_size -= 1
-            return contraint_prefix_mask(logits, prefix_id[0].tolist(), state_json)
+            return contraint_prefix_mask(logits, state_json.prefix_id[0].tolist(), state_json)
         else:
             # prefix_size in here depends on the size of the key of first in the list
             print("the datatype of parameter key:", type(state_json.parameter_key[0]))
-            state_json.prefix_size = 10
+            state_json.prefix_size = 4
             state_json.prefix_index = 0
             state_json.phase = CurrentState.PARAMETER_KEY
     if (state_json.phase == CurrentState.PARAMETER_KEY):
-        if state_json.prefix_size > state_json.prefix_index:
-            para_part = model.encode(state_json.parameter_key[0])
-            state_json.prefix_size -= 1
-            print("checking para_part:", para_part)
-            return contraint_prefix_mask(logits, para_part[0].tolist(), state_json)
+        print("-----------------------Parameter_key--------------------")
+        current_key = state_json.parameter_key[state_json.parameter_index]
+        if not state_json.parameter_key_ids:
+            state_json.parameter_key_ids = model.encode(current_key + ('": "'))[0].tolist()
+            state_json.prefix_index = 0
+        if (state_json.prefix_index < len(state_json.parameter_key_ids)):
+            return contraint_prefix_mask(logits, state_json.parameter_key_ids, state_json)
+        state_json.parameter_key_ids = []
+        state_json.prefix_index = 0
+        state_json.phase = CurrentState.PARAMETER_VALUE
+    if (state_json.phase == CurrentState.PARAMETER_VALUE):
+        print("---------------------------Parameter_value-------------------------")
+        current_type = state_json.parameter_value[state_json.parameter_index]
+        if current_type == int:
+
+        elif current_type == str:
+        
+        elif current_type == bool:
+        # if not state_json.parameter_value_ids:
+        #     state_json.parameter_value_ids = model.encode(current_value)[0].tolist()
+        #     state_json.prefix_index = 0
+        # if (state_json.prefix_index < len(state_json.parameter_value_ids)):
+        #     return contraint_prefix_mask(logits, state_json.parameter_value_ids, state_json)
+        # state_json.parameter_value_ids = []
+        # state_json.prefix_index = 0
+        # state_json.phase = CurrentState.PARAMETER_VALUE
+        # state_json.parameter_index += 1
+        if state_json.parameter_index < len(state_json.parameter_key):
+            state_json.phase = CurrentState.PARAMETER_KEY
+        else:
+            state_json.phase = CurrentState.END
+    if (state_json.phase == CurrentState.END):
+        return []
     #     prefix = model.encode("}")
     #     return contraint_prefix_mask(logits, prefix[0].tolist(), state_json)
 
@@ -183,6 +212,8 @@ def decoding_constraint(prompt: str, functions: FunctionDefinition, vocab_map: D
         current_str = model.decode(generated)
         print("current_str:", repr(current_str))
         masked_logits = adding_constraint(logits, state_json, current_str, vocab_map, model, functions)
+        if (state_json.phase == CurrentState.END):
+            break
         # print("checking for token id:", logits)
         next_token_id = int(np.argmax(masked_logits))
         generated.append(next_token_id)
@@ -192,7 +223,8 @@ def decoding_constraint(prompt: str, functions: FunctionDefinition, vocab_map: D
         #     print("The json format ended")
         #     break
         # break
-        
+
+    # combined the prompt, name prefix with the generated list  
 
 
 def start_decoding_for_each_prompt(
