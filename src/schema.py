@@ -41,6 +41,7 @@ class DecodingStateJson():
     parameter_index: int = 0
     parameter_key_ids: list[int] = field(default_factory=list, init=False)
     parameter_value_ids: list[int] = field(default_factory=list, init=False)
+    parameter_value_generated: str = ""
     prefix_size: int = 0
     prefix_index: int = 0
     prefix_id: list = field(default_factory=list)

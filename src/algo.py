@@ -5,6 +5,22 @@ from typing import Dict, Tuple, List, Any
 import json
 import numpy as np
 import math
+import re
+
+INTEGER_RE = re.compile(r"^-?\d+$")
+
+def constrain_integer_value(logits, vocab_map, state_json):
+    current_value = state_json.parameter_value_generated
+
+    valid_token_ids = []
+
+    for token_id, token in vocab_map.items():
+        candidate = current_value + token
+
+        if INTEGER_RE.match(candidate):
+            valid_token_ids.append(token_id)
+
+    return contraint_mask(logits, valid_token_ids)
 
 
 def parse_arg() -> argparse.Namespace:
@@ -153,11 +169,12 @@ def adding_constraint(logits: list[float], state_json: DecodingStateJson, curren
     if (state_json.phase == CurrentState.PARAMETER_VALUE):
         print("---------------------------Parameter_value-------------------------")
         current_type = state_json.parameter_value[state_json.parameter_index]
-        if current_type == int:
-
-        elif current_type == str:
+        print(f"type: {current_type}")
+        if current_type.type == "number":
+            return constrain_integer_value(logits, vocab_map, state_json)
+        # elif current_type == str:
         
-        elif current_type == bool:
+        # elif current_type == bool:
         # if not state_json.parameter_value_ids:
         #     state_json.parameter_value_ids = model.encode(current_value)[0].tolist()
         #     state_json.prefix_index = 0
@@ -166,13 +183,13 @@ def adding_constraint(logits: list[float], state_json: DecodingStateJson, curren
         # state_json.parameter_value_ids = []
         # state_json.prefix_index = 0
         # state_json.phase = CurrentState.PARAMETER_VALUE
-        # state_json.parameter_index += 1
-        if state_json.parameter_index < len(state_json.parameter_key):
-            state_json.phase = CurrentState.PARAMETER_KEY
-        else:
-            state_json.phase = CurrentState.END
-    if (state_json.phase == CurrentState.END):
-        return []
+    #     # state_json.parameter_index += 1
+    #     if state_json.parameter_index < len(state_json.parameter_key):
+    #         state_json.phase = CurrentState.PARAMETER_KEY
+    #     else:
+    #         state_json.phase = CurrentState.END
+    # if (state_json.phase == CurrentState.END):
+    #     return []
     #     prefix = model.encode("}")
     #     return contraint_prefix_mask(logits, prefix[0].tolist(), state_json)
 
