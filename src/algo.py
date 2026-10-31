@@ -149,6 +149,7 @@ def adding_constraint(logits: list[float], state_json: DecodingStateJson, curren
 
     """
     print("checking the current state:", state_json.phase)
+
     name_prefix = '"name": "'
     parameter_prefix = ',\n "parameters": {"'
     valid_index = []
@@ -187,6 +188,7 @@ def adding_constraint(logits: list[float], state_json: DecodingStateJson, curren
     if (state_json.phase == CurrentState.PARAMETER_KEY):
         print("-----------------------Parameter_key--------------------")
         current_key = state_json.parameter_key[state_json.parameter_index]
+        print("the current parameter_key:", current_key)
         if not state_json.parameter_key_ids:
             if state_json.parameter_index == 0:
                 key_text = current_key + '": '
@@ -208,20 +210,27 @@ def adding_constraint(logits: list[float], state_json: DecodingStateJson, curren
         print("---------------------------Parameter_value-------------------------")
         current_type = state_json.parameter_value[state_json.parameter_index]
         print("checking the type of the parameter: ", current_type.type)
-        if current_str.endswith(','):
-            state_json.parameter_value_generated = ""
-            state_json.string_started = False
-            state_json.string_closed = False
-            state_json.string_quote_ids = []
-            if state_json.parameter_index < len(state_json.parameter_key) - 1:
+        print("the current parameter_key:", state_json.parameter_key[state_json.parameter_index])
+        if state_json.string_closed:
+            if current_str.endswith(','):
+                state_json.parameter_value_generated = ""
                 state_json.parameter_index += 1
+
+                state_json.string_started = False
+                state_json.string_closed = False
+                state_json.string_quote_ids = []
+                state_json.string_content_token_ids = []
+                state_json.prefix_index = 0
+
                 state_json.phase = CurrentState.PARAMETER_KEY
+
                 return adding_constraint(
                     logits, state_json, current_str, vocab_map, model, functions
                 )
-        if current_str.endswith('}'):
-            state_json.phase = CurrentState.END
-            return logits
+
+            if current_str.endswith('}'):
+                state_json.phase = CurrentState.END
+                return logits
         if current_type.type == "number":
             return constrain_integer_value(logits, vocab_map, state_json)
         elif current_type.type == "string":
@@ -247,53 +256,110 @@ def adding_constraint(logits: list[float], state_json: DecodingStateJson, curren
     #     prefix = model.encode("}")
     #     return contraint_prefix_mask(logits, prefix[0].tolist(), state_json)
 
-def is_valid_json_string_content(value: str) -> bool:
-    escaped = False
+def is_valid_json_string_content(value: str) -> tuple[bool, bool]:
+    """
+    Returns:
+        (valid_prefix, can_close)
+    """
+    i = 0
 
-    for char in value:
-        if escaped:
-            if char not in '"\\/bfnrtu':
-                return False
-            escaped = False
-        elif char == '\\':
-            escaped = True
-        elif char == '"':
-            return False
-        elif ord(char) < 0x20:
-            return False
+    while i < len(value):
+        char = value[i]
 
-    return True
+        if ord(char) < 0x20:
+            return False, False
+
+        if char == '"':
+            return False, False
+
+        if char == '\\':
+            i += 1
+
+            # An incomplete escape is a valid prefix,
+            # but the string cannot close yet.
+            if i >= len(value):
+                return True, False
+
+            if value[i] == 'u':
+                remaining = value[i + 1:i + 5]
+
+                if any(c not in "0123456789abcdefABCDEF" for c in remaining):
+                    return False, False
+
+                if len(remaining) < 4:
+                    return True, False
+
+                i += 4
+
+            elif value[i] not in '"\\/bfnrt':
+                return False, False
+
+        i += 1
+
+    return True, True
+
+
+def _string_fragment_status(value: str) -> tuple[bool, bool, str, str]:
+    """Validate decoded string-content tokens and find a closing quote."""
+    if value.startswith('"'):
+        value = value[1:]
+    backslashes = 0
+    for index, char in enumerate(value):
+        if char == "\\":
+            backslashes += 1
+            continue
+        if char == '"' and backslashes % 2 == 0:
+            content = value[:index]
+            valid, can_close = is_valid_json_string_content(content)
+            suffix = value[index + 1:]
+            return valid and can_close and suffix in ("", ",", "}"), True, content, suffix
+        backslashes = 0
+    valid, can_close = is_valid_json_string_content(value)
+    return valid, False, value, ""
 
 
 def constrain_string_value(logits, vocab_map, state_json, model):
-    current_value = state_json.parameter_value_generated
     valid_token_ids = []
-    is_last_parameter = (
-        state_json.parameter_index == len(state_json.parameter_key) - 1
-    )
-    if not state_json.string_started:
-        quote_ids = model.encode('"')[0].tolist()
-        return contraint_prefix_mask(logits, quote_ids, state_json)
-    if not state_json.string_closed:
-        for token_id, token in vocab_map.items():
-            # Allow closing quote only if the current content is valid
-            if token == '"' and is_valid_json_string_content(current_value):
-                valid_token_ids.append(token_id)
-                continue
-            # Do not allow unescaped quotes inside the content
-            if '"' in token:
-                continue
-            candidate = current_value + token
-            if is_valid_json_string_content(candidate):
-                valid_token_ids.append(token_id)
-    else:
-        for token_id, token in vocab_map.items():
-            if is_last_parameter and token == "}":
-                valid_token_ids.append(token_id)
-            elif not is_last_parameter and token == ",":
-                valid_token_ids.append(token_id)
-    return contraint_mask(logits, valid_token_ids)
 
+    if not state_json.string_started:
+        if not state_json.string_quote_ids:
+            state_json.string_quote_ids = model.encode('"')[0].tolist()
+            state_json.prefix_index = 0
+
+        if state_json.prefix_index < len(state_json.string_quote_ids):
+            return contraint_prefix_mask(
+                logits, state_json.string_quote_ids, state_json
+            )
+
+        state_json.string_content_token_ids = list(state_json.string_quote_ids)
+        state_json.string_started = True
+        state_json.string_quote_ids = []
+        state_json.prefix_index = 0
+
+    if not state_json.string_closed:
+        for token_id in vocab_map:
+            # Decode the accumulated token sequence, since individual token
+            # spellings need not match their text in sequence context.
+            decoded = model.decode(state_json.string_content_token_ids + [token_id])
+            candidate_valid, candidate_closed, _, suffix = _string_fragment_status(decoded)
+            if candidate_valid and (not candidate_closed or suffix in ("", ",", "}")):
+                valid_token_ids.append(token_id)
+
+    else:
+        is_last_parameter = (
+            state_json.parameter_index == len(state_json.parameter_key) - 1
+        )
+
+        for token_id in vocab_map:
+            decoded = model.decode(state_json.string_content_token_ids + [token_id])
+            _, candidate_closed, _, suffix = _string_fragment_status(decoded)
+            if candidate_closed and (
+                (is_last_parameter and suffix == "}")
+                or (not is_last_parameter and suffix == ",")
+            ):
+                valid_token_ids.append(token_id)
+
+    return contraint_mask(logits, valid_token_ids)
 
 def decoding_constraint(prompt: str, functions: FunctionDefinition, vocab_map: Dict[int, str], model: Small_LLM_Model, state_json: DecodingStateJson) -> Dict[str, Any]:
     """
@@ -336,17 +402,23 @@ def decoding_constraint(prompt: str, functions: FunctionDefinition, vocab_map: D
         # print("checking for token id:", logits)
         next_token_id = int(np.argmax(masked_logits))
         generated.append(next_token_id)
+        decoded_after_token = model.decode(generated)
+        # Decode in sequence context. A single token's decoded spelling can
+        # differ from its contribution after the preceding tokens.
+        token_text = decoded_after_token[len(current_str):]
         if state_json.phase == CurrentState.PARAMETER_VALUE:
-            token_text = model.decode(next_token_id)
             current_type = state_json.parameter_value[state_json.parameter_index]
             if current_type.type == "string":
                 if state_json.string_started and not state_json.string_closed:
-                    if token_text == '"':
-                        state_json.string_closed = True
-                    else:
-                        state_json.parameter_value_generated += token_text
+                    state_json.string_content_token_ids.append(next_token_id)
+                    decoded_content = model.decode(state_json.string_content_token_ids)
+                    _, closed, content, _ = _string_fragment_status(decoded_content)
+                    state_json.parameter_value_generated = content
+                    state_json.string_closed = closed
             elif token_text not in [",", "}"]:
                 state_json.parameter_value_generated += token_text
+            if state_json.string_closed and token_text == "}":
+                state_json.phase = CurrentState.END
         print("decode:", model.decode(generated))
         print("prompt:", prompt)
         # if model.decode(generated).endswith("}") :
