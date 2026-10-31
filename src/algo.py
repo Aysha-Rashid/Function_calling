@@ -7,19 +7,25 @@ import numpy as np
 import math
 import re
 
-INTEGER_RE = re.compile(r"^-?\d+$")
+INTEGER_RE = re.compile(r"^-?(?:0|[1-9]\d*)$")
+INTEGER_PREFIX_RE = re.compile(r"^-?(?:0|[1-9]\d*)?$")
+
 
 def constrain_integer_value(logits, vocab_map, state_json):
     current_value = state_json.parameter_value_generated
-
     valid_token_ids = []
-
+    is_last_parameter = (
+        state_json.parameter_index == len(state_json.parameter_key) - 1
+    )
     for token_id, token in vocab_map.items():
         candidate = current_value + token
-
-        if INTEGER_RE.match(candidate):
+        if INTEGER_PREFIX_RE.fullmatch(candidate):
             valid_token_ids.append(token_id)
-
+        elif INTEGER_RE.fullmatch(current_value):
+            if not is_last_parameter and token == ",":
+                valid_token_ids.append(token_id)
+            elif is_last_parameter and token == "}":
+                valid_token_ids.append(token_id)
     return contraint_mask(logits, valid_token_ids)
 
 
@@ -115,13 +121,36 @@ def function_token_id(partial: str, logits: list[float], current_text: str, voca
     return (contraint_mask(logits, valid_ids))
 
 
+def constrain_boolean_value(logits, vocab_map, state_json):
+    current_value = state_json.parameter_value_generated
+    valid_token_ids = []
+
+    is_last_parameter = (
+        state_json.parameter_index == len(state_json.parameter_key) - 1
+    )
+
+    for token_id, token in vocab_map.items():
+        candidate = current_value + token
+
+        if "true".startswith(candidate) or "false".startswith(candidate):
+            valid_token_ids.append(token_id)
+
+        elif current_value in ["true", "false"]:
+            if not is_last_parameter and token == ",":
+                valid_token_ids.append(token_id)
+            elif is_last_parameter and token == "}":
+                valid_token_ids.append(token_id)
+
+    return contraint_mask(logits, valid_token_ids)
+
+
 def adding_constraint(logits: list[float], state_json: DecodingStateJson, current_str: str, vocab_map: Dict[int, str], model: Small_LLM_Model, functions: FunctionDefinition) -> list[float]:
     """
 
     """
     print("checking the current state:", state_json.phase)
     name_prefix = '"name": "'
-    parameter_prefix = ',\n   "parameters":{\n   "'
+    parameter_prefix = ',\n "parameters": {"'
     valid_index = []
     if (state_json.phase == CurrentState.FUNCTION_NAME):
         partial_name = current_str.split(name_prefix)[-1] 
@@ -159,22 +188,47 @@ def adding_constraint(logits: list[float], state_json: DecodingStateJson, curren
         print("-----------------------Parameter_key--------------------")
         current_key = state_json.parameter_key[state_json.parameter_index]
         if not state_json.parameter_key_ids:
-            state_json.parameter_key_ids = model.encode(current_key + ('": "'))[0].tolist()
+            if state_json.parameter_index == 0:
+                key_text = current_key + '": '
+            else:
+                key_text = '"' + current_key + '": '
+
+            state_json.parameter_key_ids = model.encode(key_text)[0].tolist()
             state_json.prefix_index = 0
-        if (state_json.prefix_index < len(state_json.parameter_key_ids)):
-            return contraint_prefix_mask(logits, state_json.parameter_key_ids, state_json)
+
+        if state_json.prefix_index < len(state_json.parameter_key_ids):
+            return contraint_prefix_mask(
+                logits, state_json.parameter_key_ids, state_json
+            )
+
         state_json.parameter_key_ids = []
         state_json.prefix_index = 0
         state_json.phase = CurrentState.PARAMETER_VALUE
-    if (state_json.phase == CurrentState.PARAMETER_VALUE):
+    if state_json.phase == CurrentState.PARAMETER_VALUE:
         print("---------------------------Parameter_value-------------------------")
         current_type = state_json.parameter_value[state_json.parameter_index]
-        print(f"type: {current_type}")
+        print("checking the type of the parameter: ", current_type.type)
+        if current_str.endswith(','):
+            state_json.parameter_value_generated = ""
+            state_json.string_started = False
+            state_json.string_closed = False
+            state_json.string_quote_ids = []
+            if state_json.parameter_index < len(state_json.parameter_key) - 1:
+                state_json.parameter_index += 1
+                state_json.phase = CurrentState.PARAMETER_KEY
+                return adding_constraint(
+                    logits, state_json, current_str, vocab_map, model, functions
+                )
+        if current_str.endswith('}'):
+            state_json.phase = CurrentState.END
+            return logits
         if current_type.type == "number":
             return constrain_integer_value(logits, vocab_map, state_json)
-        # elif current_type == str:
-        
-        # elif current_type == bool:
+        elif current_type.type == "string":
+            print("for string it comes here")
+            return constrain_string_value(logits, vocab_map, state_json, model)
+        elif current_type.type == bool:
+            return constrain_boolean_value(logits, vocab_map, state_json)
         # if not state_json.parameter_value_ids:
         #     state_json.parameter_value_ids = model.encode(current_value)[0].tolist()
         #     state_json.prefix_index = 0
@@ -193,6 +247,53 @@ def adding_constraint(logits: list[float], state_json: DecodingStateJson, curren
     #     prefix = model.encode("}")
     #     return contraint_prefix_mask(logits, prefix[0].tolist(), state_json)
 
+def is_valid_json_string_content(value: str) -> bool:
+    escaped = False
+
+    for char in value:
+        if escaped:
+            if char not in '"\\/bfnrtu':
+                return False
+            escaped = False
+        elif char == '\\':
+            escaped = True
+        elif char == '"':
+            return False
+        elif ord(char) < 0x20:
+            return False
+
+    return True
+
+
+def constrain_string_value(logits, vocab_map, state_json, model):
+    current_value = state_json.parameter_value_generated
+    valid_token_ids = []
+    is_last_parameter = (
+        state_json.parameter_index == len(state_json.parameter_key) - 1
+    )
+    if not state_json.string_started:
+        quote_ids = model.encode('"')[0].tolist()
+        return contraint_prefix_mask(logits, quote_ids, state_json)
+    if not state_json.string_closed:
+        for token_id, token in vocab_map.items():
+            # Allow closing quote only if the current content is valid
+            if token == '"' and is_valid_json_string_content(current_value):
+                valid_token_ids.append(token_id)
+                continue
+            # Do not allow unescaped quotes inside the content
+            if '"' in token:
+                continue
+            candidate = current_value + token
+            if is_valid_json_string_content(candidate):
+                valid_token_ids.append(token_id)
+    else:
+        for token_id, token in vocab_map.items():
+            if is_last_parameter and token == "}":
+                valid_token_ids.append(token_id)
+            elif not is_last_parameter and token == ",":
+                valid_token_ids.append(token_id)
+    return contraint_mask(logits, valid_token_ids)
+
 
 def decoding_constraint(prompt: str, functions: FunctionDefinition, vocab_map: Dict[int, str], model: Small_LLM_Model, state_json: DecodingStateJson) -> Dict[str, Any]:
     """
@@ -210,14 +311,15 @@ def decoding_constraint(prompt: str, functions: FunctionDefinition, vocab_map: D
         for function in functions
     )
     # print("check the list of functions: ", func_descriptions)
+    json_begin_prefix = ("{\n"
+        f' "prompt": "{prompt}",\n "name": "')
     user_prompt = (
         "You are a function calling model.\n"
         "Using the list of function below:"
         f"{func_descriptions} to answer the user query:"
         f"{prompt}\n"
         "and output the answer in this format:"
-        "{\n"
-        f' "prompt": "{prompt}",\n "name": "'
+        f"{json_begin_prefix}"
     )
     # print("does this work? ", user_prompt)
     # state_json = DecodingStateJson()
@@ -234,13 +336,25 @@ def decoding_constraint(prompt: str, functions: FunctionDefinition, vocab_map: D
         # print("checking for token id:", logits)
         next_token_id = int(np.argmax(masked_logits))
         generated.append(next_token_id)
+        if state_json.phase == CurrentState.PARAMETER_VALUE:
+            token_text = model.decode(next_token_id)
+            current_type = state_json.parameter_value[state_json.parameter_index]
+            if current_type.type == "string":
+                if state_json.string_started and not state_json.string_closed:
+                    if token_text == '"':
+                        state_json.string_closed = True
+                    else:
+                        state_json.parameter_value_generated += token_text
+            elif token_text not in [",", "}"]:
+                state_json.parameter_value_generated += token_text
         print("decode:", model.decode(generated))
         print("prompt:", prompt)
         # if model.decode(generated).endswith("}") :
         #     print("The json format ended")
         #     break
         # break
-
+    combined = json_begin_prefix + model.decode(generated)
+    print(combined)
     # combined the prompt, name prefix with the generated list  
 
 
@@ -278,7 +392,7 @@ def start_decoding_for_each_prompt(
     #     # print("checking each string:", string_each_prompt)
     #     result = decoding_constraint(string_each_prompt, functions, vocab_map, model)
     # # return result
-    prompt_test = "What is the sum of 2 and 3?"
+    prompt_test = "Substitute the word 'cat' with 'dog' in 'The cat sat on the mat with another cat'"
     result = decoding_constraint(prompt_test, functions, vocab_map, model, state_json)
 
 

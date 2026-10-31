@@ -45,6 +45,9 @@ class DecodingStateJson():
     prefix_size: int = 0
     prefix_index: int = 0
     prefix_id: list = field(default_factory=list)
+    string_started: bool = False
+    string_closed: bool = False
+    string_quote_ids: list[int] = field(default_factory=list, init=False)
     def __post_init__(self):
         self.valid_function_name = {func.name: func for func in self.Functions_list}
 
